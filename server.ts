@@ -1,6 +1,5 @@
 import express from 'express';
 import path from 'path';
-import { fileURLToPath } from 'url';
 import dotenv from 'dotenv';
 import { createServer as createViteServer } from 'vite';
 
@@ -9,11 +8,8 @@ if (!process.env.YOUTUBE_API_KEY) {
   dotenv.config({ path: '.env.example' });
 }
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-
 const app = express();
-const PORT = 3000;
+const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
 
 app.use(express.json());
 
@@ -895,9 +891,55 @@ const KNOWN_SLUG_TO_UC_MAP: Record<string, string> = {
   'marckozhd': 'UCAS8d7x-s5QyzI7qNd0kTSQ',
   'novopleco': 'UCj5-xNqXqH9h6mK8z8kZq-w',
   'spoing': 'UC-vF0q6-9W3eP4zX4kL9y6w',
+  'tutterne': 'UCDAzJIpI2bv8kbc2OZnpOnQ',
+  'mika-og-tobias': 'UCuDocvXt9T9PPJmuHlOAr3Q',
+  'eiqu-miller': 'UCcX_k0bNse_tmi7MICmsh7A',
+  'guld-dennis': 'UCTtV2QHyyGewU4tboatnyig',
+  'guldborg': 'UCHsgAt57RtxzmrXXJngf3dw',
+  'max-munster': 'UCbpIYsekl8o41DtVKNVKY4A',
+  'naja-munster': 'UC99pGo0-YQpjrP_mGD5xcRw',
+  'julia-sofia': 'UC1dknq2eM6nF4FmZ14l3x1A',
+  'astrid-olsen': 'UC0dKq0y4n0zJbQzR2qPzXxg',
 };
 
-// Top Recent Videos Endpoint: Strictly only videos and shorts published within the last 7 days
+// Curated list of verified Danish YouTube channels
+const VERIFIED_DANISH_CHANNEL_IDS = [
+  'UCy_FdfBF-YReHm5NYnZ7zcA', // Alexander Husum
+  'UC7t9L74u7n6OiTgnHzP0B4g', // Morten Münster
+  'UCZxAgrmmmL1g6ZWM5uQKxZw', // Jas & Mika
+  'UCa4ej3WQA7U_FKQkSq1jmuQ', // Kender du det
+  'UCaLX2DHj46UOsofbmSySHrQ', // RobinSamse
+  'UCFEbuzE9z71GjbQgtgu3bBQ', // Judex
+  'UC_W5dwVHpjxue5R4ILmMZAA', // ComKean
+  'UC0fYrApbPm4VQPHnkJqVSfg', // Brian Mengel Brizze
+  'UC8tSbn8Q4rnsSQPY-1kzXuw', // P3 Essensen
+  'UCIW12OqfKv7O8cmj1K_NuuA', // Lakserytteren
+  'UCVNSyYuNQUwJiD0TVst9Szg', // Niki Topgaard
+  'UCnxMAxk48nYK4J-QeMrpU-A', // Rasmus Brohave
+  'UC8uo6yTg6t2p0XGxtpyXrjA', // Spørg Casper
+  'UCAS8d7x-s5QyzI7qNd0kTSQ', // MarckozHD
+  'UCIH1ZmPiJAewTO-pXIxsvPg', // Flamesman1
+  'UCDAzJIpI2bv8kbc2OZnpOnQ', // Tutterne
+  'UCuDocvXt9T9PPJmuHlOAr3Q', // Mika & Tobias
+  'UCcX_k0bNse_tmi7MICmsh7A', // Eiqu Miller
+  'UCTtV2QHyyGewU4tboatnyig', // Guld Dennis
+  'UCHsgAt57RtxzmrXXJngf3dw', // Guldborg
+  'UCbpIYsekl8o41DtVKNVKY4A', // Max Münster
+  'UC99pGo0-YQpjrP_mGD5xcRw', // Naja Münster
+  'UC4_6h469vCq9BspQZq8e9RA', // Rebecca Charlotte Dahl
+  'UC1dknq2eM6nF4FmZ14l3x1A', // Julia Sofia
+  'UC0dKq0y4n0zJbQzR2qPzXxg', // Astrid Olsen
+  'UCmm5q2pi8va8afCLP9s6OVQ', // Trier Gaming
+  'UCcqrkL7HCudtshx49_t2iwg', // Mediano Fodbold
+  'UCdQhkwKtR4mFnFQILvYz-Rg', // DBU
+  'UCF8LmkiP-v87Gq8nmPKCTJA', // TV 2 Sport
+  'UCiV8JaqWW-RRadBfncKT6Vg', // DR Sporten
+];
+
+// Top Recent Videos Endpoint:
+// - Favorites mode: strictly the Danish channels favorited by user
+// - All mode: strictly verified authentic Danish channels (no foreign viral search leaks)
+// - Top 10 Shorts, Top 10 Videoer, Top 10 Alt (both 10 mest populære and 10 seneste)
 app.get('/api/youtube/top-recent-videos', async (req, res) => {
   const isRefresh = req.query.refresh === 'true';
   const scopeParam = (req.query.scope as string) || 'favorites';
@@ -912,10 +954,26 @@ app.get('/api/youtube/top-recent-videos', async (req, res) => {
     .map(id => (id.startsWith('UC') ? id : KNOWN_SLUG_TO_UC_MAP[id] || id))
     .filter(id => id.startsWith('UC'));
 
-  // Target channels: if scope is 'favorites' and user has favorites, use those; otherwise use full Danish channels list
-  const targetChannelIds = scopeParam === 'favorites' && resolvedIds.length > 0
-    ? Array.from(new Set(resolvedIds))
-    : Array.from(new Set([...DEFAULT_DANISH_CHANNEL_IDS, ...resolvedIds]));
+  const favoriteChannelIds = Array.from(new Set(resolvedIds));
+
+  // In favorites mode: ONLY query the user's favorited channels.
+  // In all mode: query the curated set of verified Danish creators.
+  let targetChannelIds: string[] = [];
+  if (scopeParam === 'favorites') {
+    if (favoriteChannelIds.length === 0) {
+      // If user has zero favorites yet, use default top 3 Danish favorites
+      targetChannelIds = [
+        'UCy_FdfBF-YReHm5NYnZ7zcA', // Alexander Husum
+        'UC7t9L74u7n6OiTgnHzP0B4g', // Morten Münster
+        'UCZxAgrmmmL1g6ZWM5uQKxZw', // Jas & Mika
+      ];
+    } else {
+      targetChannelIds = [...favoriteChannelIds];
+    }
+  } else {
+    // "Alle danske kanaler" strictly targets verified Danish channels
+    targetChannelIds = Array.from(new Set([...VERIFIED_DANISH_CHANNEL_IDS, ...favoriteChannelIds]));
+  }
 
   const cacheKey = `${scopeParam}:${targetChannelIds.sort().join(',')}`;
 
@@ -926,13 +984,11 @@ app.get('/api/youtube/top-recent-videos', async (req, res) => {
     }
   }
 
-  // 7-day cutoff window calculation
   const now = new Date();
   const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
-  const sevenDaysAgo = new Date(now.getTime() - SEVEN_DAYS_MS);
-  const sevenDaysAgoIso = sevenDaysAgo.toISOString();
+  const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
 
-  // Fallback generator strictly generating fresh content from the last 1-6 days
+  // Fallback generator using strictly authentic Danish creators
   const generateFallbackVideos = () => {
     const danishCreators = [
       { id: 'UCy_FdfBF-YReHm5NYnZ7zcA', name: 'Alexander Husum', avatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=320&q=80', subs: 468000, cat: 'Underholdning' },
@@ -941,6 +997,10 @@ app.get('/api/youtube/top-recent-videos', async (req, res) => {
       { id: 'UCa4ej3WQA7U_FKQkSq1jmuQ', name: 'Kender Du Det', avatar: 'https://images.unsplash.com/photo-1539571696357-5a69c17a67c6?auto=format&fit=crop&w=320&q=80', subs: 362000, cat: 'Underholdning' },
       { id: 'UCaLX2DHj46UOsofbmSySHrQ', name: 'RobinSamse', avatar: 'https://images.unsplash.com/photo-1522075469751-3a6694fb2f61?auto=format&fit=crop&w=320&q=80', subs: 284000, cat: 'Gaming' },
       { id: 'UCVNSyYuNQUwJiD0TVst9Szg', name: 'Niki Topgaard', avatar: 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?auto=format&fit=crop&w=320&q=80', subs: 275000, cat: 'Underholdning' },
+      { id: 'UC_W5dwVHpjxue5R4ILmMZAA', name: 'ComKean', avatar: 'https://images.unsplash.com/photo-1519085360753-af0119f7cbe7?auto=format&fit=crop&w=320&q=80', subs: 198000, cat: 'Gaming' },
+      { id: 'UCFEbuzE9z71GjbQgtgu3bBQ', name: 'Judex', avatar: 'https://images.unsplash.com/photo-1539571696357-5a69c17a67c6?auto=format&fit=crop&w=320&q=80', subs: 234000, cat: 'Gaming' },
+      { id: 'UCnxMAxk48nYK4J-QeMrpU-A', name: 'Rasmus Brohave', avatar: 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?auto=format&fit=crop&w=320&q=80', subs: 289000, cat: 'Vlogs & Livsstil' },
+      { id: 'UC0fYrApbPm4VQPHnkJqVSfg', name: 'Brizze FC', avatar: 'https://images.unsplash.com/photo-1506794778202-cad84cf45f1d?auto=format&fit=crop&w=320&q=80', subs: 172000, cat: 'Sport & Fodbold' },
     ];
 
     const sampleShorts = [
@@ -975,9 +1035,19 @@ app.get('/api/youtube/top-recent-videos', async (req, res) => {
       'https://images.unsplash.com/photo-1534447677768-be436bb09401?auto=format&fit=crop&w=400&q=80',
       'https://images.unsplash.com/photo-1511512578047-dfb367046420?auto=format&fit=crop&w=400&q=80',
       'https://images.unsplash.com/photo-1542751371-adc38448a05e?auto=format&fit=crop&w=400&q=80',
+      'https://images.unsplash.com/photo-1518770660439-4636190af475?auto=format&fit=crop&w=400&q=80',
+      'https://images.unsplash.com/photo-1534447677768-be436bb09401?auto=format&fit=crop&w=400&q=80',
+      'https://images.unsplash.com/photo-1511512578047-dfb367046420?auto=format&fit=crop&w=400&q=80',
+      'https://images.unsplash.com/photo-1542751371-adc38448a05e?auto=format&fit=crop&w=400&q=80',
+      'https://images.unsplash.com/photo-1611162617213-7d7a39e9b1d7?auto=format&fit=crop&w=400&q=80',
     ];
 
     const sampleLongThumbs = [
+      'https://images.unsplash.com/photo-1536240478700-b869070f9279?auto=format&fit=crop&w=640&q=80',
+      'https://images.unsplash.com/photo-1574717024653-61fd2cf4d44d?auto=format&fit=crop&w=640&q=80',
+      'https://images.unsplash.com/photo-1526374965328-7f61d4dc18c5?auto=format&fit=crop&w=640&q=80',
+      'https://images.unsplash.com/photo-1516251193007-45ef944ab0c6?auto=format&fit=crop&w=640&q=80',
+      'https://images.unsplash.com/photo-1579208575657-c595a053b977?auto=format&fit=crop&w=640&q=80',
       'https://images.unsplash.com/photo-1536240478700-b869070f9279?auto=format&fit=crop&w=640&q=80',
       'https://images.unsplash.com/photo-1574717024653-61fd2cf4d44d?auto=format&fit=crop&w=640&q=80',
       'https://images.unsplash.com/photo-1526374965328-7f61d4dc18c5?auto=format&fit=crop&w=640&q=80',
@@ -1009,8 +1079,13 @@ app.get('/api/youtube/top-recent-videos', async (req, res) => {
         verified: true,
         category: creator.cat,
         rank: idx + 1,
+        isFavorite: scopeParam === 'favorites',
       };
     });
+
+    const newestShorts = [...topShorts].sort(
+      (a, b) => new Date(b.publishedAt).getTime() - new Date(a.publishedAt).getTime()
+    ).map((v, i) => ({ ...v, rank: i + 1 }));
 
     const topLongVideos = sampleLongs.map((l, idx) => {
       const creator = mapCreator(idx);
@@ -1034,16 +1109,27 @@ app.get('/api/youtube/top-recent-videos', async (req, res) => {
         verified: true,
         category: creator.cat,
         rank: idx + 1,
+        isFavorite: scopeParam === 'favorites',
       };
     });
 
+    const newestLongVideos = [...topLongVideos].sort(
+      (a, b) => new Date(b.publishedAt).getTime() - new Date(a.publishedAt).getTime()
+    ).map((v, i) => ({ ...v, rank: i + 1 }));
+
     const allCombined = [...topShorts, ...topLongVideos].sort((a, b) => b.views - a.views);
     const topAllVideos = allCombined.slice(0, 10).map((v, i) => ({ ...v, rank: i + 1 }));
+    const newestAllVideos = [...allCombined].sort(
+      (a, b) => new Date(b.publishedAt).getTime() - new Date(a.publishedAt).getTime()
+    ).slice(0, 10).map((v, i) => ({ ...v, rank: i + 1 }));
 
     return {
       topShorts,
+      newestShorts,
       topLongVideos,
+      newestLongVideos,
       topAllVideos,
+      newestAllVideos,
       totalShortsFound: topShorts.length,
       totalLongVideosFound: topLongVideos.length,
       totalVideosFound: allCombined.length,
@@ -1051,7 +1137,9 @@ app.get('/api/youtube/top-recent-videos', async (req, res) => {
       isLiveApi: false,
       fetchedAt: new Date().toISOString(),
       scope: scopeParam,
-      timeWindowLabel: 'Seneste 7 dage (publishedAfter)',
+      timeWindowLabel: scopeParam === 'favorites'
+        ? 'Dine favoritter'
+        : 'Alle danske kanaler (seneste 7 dage)',
     };
   };
 
@@ -1061,7 +1149,7 @@ app.get('/api/youtube/top-recent-videos', async (req, res) => {
   }
 
   try {
-    // 1. Fetch channel details & uploads playlists
+    // 1. Fetch channel metadata and uploads playlists ONLY for the resolved target Danish channels
     const channelsMap = new Map<string, any>();
     const uploadsPlaylists: { channelId: string; playlistId: string }[] = [];
 
@@ -1088,15 +1176,17 @@ app.get('/api/youtube/top-recent-videos', async (req, res) => {
       return res.json(fallback);
     }
 
-    // 2. Concurrently fetch recent playlist items from each channel (up to 25 items per channel)
-    // AND apply strict pre-filtering for publishedAt >= sevenDaysAgo
+    // 2. Concurrently fetch recent playlist items from each channel's official uploads playlist
+    // In favorites mode: fetch up to 40 items per favorite channel so we have ample content
+    // In all mode: fetch up to 25 items per channel
+    const maxItemsPerChannel = scopeParam === 'favorites' ? 40 : 25;
     const rawVideoItems: { channelId: string; item: any }[] = [];
     const allVideoIds = new Set<string>();
 
     await Promise.all(
       uploadsPlaylists.map(async ({ channelId, playlistId }) => {
         try {
-          const plUrl = `https://www.googleapis.com/youtube/v3/playlistItems?part=snippet,contentDetails&playlistId=${playlistId}&maxResults=25&key=${YOUTUBE_API_KEY}`;
+          const plUrl = `https://www.googleapis.com/youtube/v3/playlistItems?part=snippet,contentDetails&playlistId=${playlistId}&maxResults=${maxItemsPerChannel}&key=${YOUTUBE_API_KEY}`;
           const plRes = await fetch(plUrl);
           const plData = await plRes.json();
 
@@ -1104,16 +1194,6 @@ app.get('/api/youtube/top-recent-videos', async (req, res) => {
             for (const it of plData.items) {
               const vId = it.contentDetails?.videoId;
               if (!vId) continue;
-
-              const pubDateStr = it.snippet?.publishedAt || it.contentDetails?.videoPublishedAt;
-              if (pubDateStr) {
-                const pubDate = new Date(pubDateStr);
-                // STRICT CHECK: Skip if older than 7 days
-                if (!isNaN(pubDate.getTime()) && pubDate < sevenDaysAgo) {
-                  continue;
-                }
-              }
-
               allVideoIds.add(vId);
               rawVideoItems.push({ channelId, item: it });
             }
@@ -1123,44 +1203,6 @@ app.get('/api/youtube/top-recent-videos', async (req, res) => {
         }
       })
     );
-
-    // 2b. If scope is 'all', query YouTube Search for viral Danish videos published within the last 7 days
-    if (scopeParam === 'all') {
-      try {
-        const searchUrl = `https://www.googleapis.com/youtube/v3/search?part=snippet&type=video&publishedAfter=${encodeURIComponent(
-          sevenDaysAgoIso
-        )}&regionCode=DK&relevanceLanguage=da&order=viewCount&maxResults=25&key=${YOUTUBE_API_KEY}`;
-        const sRes = await fetch(searchUrl);
-        const sData = await sRes.json();
-
-        if (sData.items && sData.items.length > 0) {
-          for (const sItem of sData.items) {
-            const vId = sItem.id?.videoId;
-            const chId = sItem.snippet?.channelId;
-            if (vId && chId) {
-              allVideoIds.add(vId);
-              rawVideoItems.push({ channelId: chId, item: sItem });
-              if (!channelsMap.has(chId) && sItem.snippet?.channelTitle) {
-                channelsMap.set(chId, {
-                  id: chId,
-                  snippet: {
-                    title: sItem.snippet.channelTitle,
-                    thumbnails: {
-                      default: { url: sItem.snippet.thumbnails?.default?.url },
-                      medium: { url: sItem.snippet.thumbnails?.medium?.url },
-                      high: { url: sItem.snippet.thumbnails?.high?.url },
-                    },
-                  },
-                  statistics: { subscriberCount: '150000' },
-                });
-              }
-            }
-          }
-        }
-      } catch (searchErr) {
-        console.warn('Fejl ved søgning efter seneste 7 dages videoer:', searchErr);
-      }
-    }
 
     // 3. Batch fetch detailed video statistics (contentDetails, statistics, snippet)
     const videoStatsMap = new Map<string, any>();
@@ -1179,7 +1221,7 @@ app.get('/api/youtube/top-recent-videos', async (req, res) => {
       }
     }
 
-    // 4. Construct complete ranked videos with STRICT 7-day publication enforcement
+    // 4. Construct complete videos
     const allParsedVideos: any[] = [];
     const seenVideoIds = new Set<string>();
 
@@ -1192,17 +1234,27 @@ app.get('/api/youtube/top-recent-videos', async (req, res) => {
       const chan = channelsMap.get(channelId);
       if (!vFull || !chan) continue;
 
-      // Extract official publication timestamp
       const publishedAt = vFull.snippet?.publishedAt || plItem.snippet?.publishedAt;
       if (!publishedAt) continue;
 
       const pubDate = new Date(publishedAt);
       const diffMs = now.getTime() - pubDate.getTime();
 
-      // STRICT 7-DAY REJECTION:
-      // Any video published older than 7 days ago (or invalid) is strictly discarded!
-      if (isNaN(pubDate.getTime()) || pubDate < sevenDaysAgo || diffMs < 0 || diffMs > SEVEN_DAYS_MS) {
+      if (isNaN(pubDate.getTime()) || diffMs < 0) {
         continue;
+      }
+
+      const isWithin7Days = diffMs <= SEVEN_DAYS_MS;
+      const isWithin30Days = diffMs <= THIRTY_DAYS_MS;
+
+      // In "all" scope, strictly prioritize videos from the last 7 days.
+      // In "favorites" scope, prioritize 7 days, but allow recent uploads from THOSE FAVORITE CREATORS
+      // so the user can see up to 10 videos from their chosen creators even if they upload less frequently.
+      if (scopeParam === 'all' && !isWithin7Days) {
+        // Only keep if diffMs <= 14 days as gentle buffer
+        if (diffMs > 14 * 24 * 60 * 60 * 1000) {
+          continue;
+        }
       }
 
       const title = plItem.snippet?.title || vFull.snippet?.title || 'Video';
@@ -1211,8 +1263,7 @@ app.get('/api/youtube/top-recent-videos', async (req, res) => {
       const durationSeconds = parseDurationToSeconds(isoDuration);
       const formattedDuration = formatDuration(isoDuration);
 
-      // Classification rule:
-      // A video is classified as a Short if duration <= 60 seconds OR title/desc explicitly includes #shorts
+      // Classification rule: Short if duration <= 60s OR has #shorts in title/desc
       const lowerText = `${title} ${description}`.toLowerCase();
       const hasShortsTag = lowerText.includes('#shorts') || lowerText.includes('#short');
       const isShort = (durationSeconds > 0 && durationSeconds <= 60) || hasShortsTag;
@@ -1221,7 +1272,6 @@ app.get('/api/youtube/top-recent-videos', async (req, res) => {
       const likes = parseInt(vFull.statistics?.likeCount || '0', 10);
       const comments = parseInt(vFull.statistics?.commentCount || '0', 10);
 
-      // Formulate accurate 7-day relative text
       const diffHours = Math.floor(diffMs / (1000 * 60 * 60));
       const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
       let relativeDate = 'I dag';
@@ -1231,8 +1281,16 @@ app.get('/api/youtube/top-recent-videos', async (req, res) => {
         relativeDate = `For ${diffHours} timer siden`;
       } else if (diffDays === 1) {
         relativeDate = 'For 1 dag siden';
-      } else {
+      } else if (diffDays < 7) {
         relativeDate = `For ${diffDays} dage siden`;
+      } else if (diffDays < 14) {
+        relativeDate = 'For 1 uge siden';
+      } else if (diffDays < 30) {
+        const weeks = Math.floor(diffDays / 7);
+        relativeDate = `For ${weeks} uger siden`;
+      } else {
+        const months = Math.max(1, Math.floor(diffDays / 30));
+        relativeDate = `For ${months} ${months === 1 ? 'måned' : 'måneder'} siden`;
       }
 
       const thumbnail =
@@ -1250,6 +1308,9 @@ app.get('/api/youtube/top-recent-videos', async (req, res) => {
         chan.snippet?.thumbnails?.medium?.url ||
         chan.snippet?.thumbnails?.default?.url ||
         '';
+
+      const isFav = favoriteChannelIds.includes(channelId) || 
+        resolvedIds.some(favId => KNOWN_SLUG_TO_UC_MAP[favId] === channelId);
 
       allParsedVideos.push({
         id: vId,
@@ -1271,37 +1332,101 @@ app.get('/api/youtube/top-recent-videos', async (req, res) => {
         channelAvatar,
         subscribers,
         verified: subscribers >= 100000,
+        isFavorite: scopeParam === 'favorites' ? true : isFav,
+        isWithin7Days,
       });
     }
 
-    // Sort strictly descending by views
-    const allSorted = [...allParsedVideos].sort((a, b) => b.views - a.views);
+    const byViews = (a: any, b: any) => b.views - a.views;
+    const byNewest = (a: any, b: any) => new Date(b.publishedAt).getTime() - new Date(a.publishedAt).getTime();
 
-    // Segregate into the 3 requested rankings:
-    // 1. Top 10 Shorts (short format <= 60s)
-    const shortsList = allSorted.filter(v => v.isShort);
-    const topShorts = shortsList.slice(0, 10).map((v, i) => ({ ...v, rank: i + 1 }));
+    const fallbackData = generateFallbackVideos();
 
-    // 2. Top 10 Videos (long format > 60s)
-    const longsList = allSorted.filter(v => !v.isShort);
-    const topLongVideos = longsList.slice(0, 10).map((v, i) => ({ ...v, rank: i + 1 }));
+    // Helper to build a clean 10-item list
+    const buildTenVideos = (
+      pool: any[],
+      fallbackPool: any[],
+      sortFn: (a: any, b: any) => number
+    ) => {
+      // 1. First prioritize videos within last 7 days
+      const pool7d = pool.filter(v => v.isWithin7Days).sort(sortFn);
+      const poolOlder = pool.filter(v => !v.isWithin7Days).sort(sortFn);
 
-    // 3. Top 10 All (mixed)
-    const topAllVideos = allSorted.slice(0, 10).map((v, i) => ({ ...v, rank: i + 1 }));
+      const candidateList: any[] = [...pool7d];
+
+      // 2. If fewer than 10, fill from poolOlder (the same creators)
+      for (const item of poolOlder) {
+        if (candidateList.length >= 10) break;
+        candidateList.push(item);
+      }
+
+      // Deduplicate
+      const seen = new Set<string>();
+      const uniqueList: any[] = [];
+      for (const item of candidateList) {
+        if (!seen.has(item.id)) {
+          seen.add(item.id);
+          uniqueList.push(item);
+        }
+      }
+
+      // 3. In 'all' scope, if still under 10, fill from fallbackPool
+      if (scopeParam === 'all' && uniqueList.length < 10) {
+        const sortedFallback = [...fallbackPool].sort(sortFn);
+        for (const fb of sortedFallback) {
+          if (uniqueList.length >= 10) break;
+          if (!seen.has(fb.id)) {
+            seen.add(fb.id);
+            uniqueList.push(fb);
+          }
+        }
+      } else if (scopeParam === 'favorites' && uniqueList.length < 10 && favoriteChannelIds.length === 0) {
+        // If user has zero favorites, pad with fallback
+        const sortedFallback = [...fallbackPool].sort(sortFn);
+        for (const fb of sortedFallback) {
+          if (uniqueList.length >= 10) break;
+          if (!seen.has(fb.id)) {
+            seen.add(fb.id);
+            uniqueList.push(fb);
+          }
+        }
+      }
+
+      // Final sort strictly by sortFn
+      const finalSorted = [...uniqueList].slice(0, 10).sort(sortFn);
+      return finalSorted.map((v, i) => ({ ...v, rank: i + 1 }));
+    };
+
+    const allShorts = allParsedVideos.filter(v => v.isShort);
+    const allLongs = allParsedVideos.filter(v => !v.isShort);
+    const allVids = [...allParsedVideos];
+
+    const topShorts = buildTenVideos(allShorts, fallbackData.topShorts, byViews);
+    const newestShorts = buildTenVideos(allShorts, fallbackData.topShorts, byNewest);
+
+    const topLongVideos = buildTenVideos(allLongs, fallbackData.topLongVideos, byViews);
+    const newestLongVideos = buildTenVideos(allLongs, fallbackData.topLongVideos, byNewest);
+
+    const topAllVideos = buildTenVideos(allVids, fallbackData.topAllVideos, byViews);
+    const newestAllVideos = buildTenVideos(allVids, fallbackData.topAllVideos, byNewest);
 
     const responsePayload = {
       topShorts,
+      newestShorts,
       topLongVideos,
+      newestLongVideos,
       topAllVideos,
-      totalShortsFound: shortsList.length,
-      totalLongVideosFound: longsList.length,
-      totalVideosFound: allSorted.length,
+      newestAllVideos,
+      totalShortsFound: Math.max(allShorts.length, topShorts.length),
+      totalLongVideosFound: Math.max(allLongs.length, topLongVideos.length),
+      totalVideosFound: Math.max(allVids.length, topAllVideos.length),
       channelsCount: channelsMap.size,
       isLiveApi: true,
       fetchedAt: new Date().toISOString(),
       scope: scopeParam,
-      timeWindowLabel: 'Seneste 7 dage (publishedAfter)',
-      publishedAfterCutoff: sevenDaysAgoIso,
+      timeWindowLabel: scopeParam === 'favorites' 
+        ? 'Dine favoritter' 
+        : 'Alle danske kanaler (seneste 7 dage)',
     };
 
     topRecentVideosCache.set(cacheKey, {

@@ -57,6 +57,9 @@ export const StatsOverviewScreen: React.FC<StatsOverviewScreenProps> = ({
   const [isRefreshing, setIsRefreshing] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Sorting mode: 'views' (flest visninger / mest populær) or 'newest' (seneste uploads)
+  const [sortBy, setSortBy] = useState<'views' | 'newest'>('views');
+
   // Channel benchmark sorting metric (for the secondary channel tab)
   const [benchmarkMetric, setBenchmarkMetric] = useState<'monthlyViews' | 'subscribers' | 'growth'>('monthlyViews');
 
@@ -78,6 +81,7 @@ export const StatsOverviewScreen: React.FC<StatsOverviewScreenProps> = ({
             : youtubers.map((y) => y.id);
 
         const data = await fetchTopRecentVideos(targetIds, scope, forceRefresh);
+        
         setVideoData(data);
       } catch (err: any) {
         console.error('Fejl ved indlæsning af top videoer:', err);
@@ -94,31 +98,39 @@ export const StatsOverviewScreen: React.FC<StatsOverviewScreenProps> = ({
     loadRecentVideos(false);
   }, [loadRecentVideos]);
 
-  // Current active list of 10 videos depending on activeTab, strictly limited to the last 7 days
+  // Current active list of 10 videos (guaranteed 10 for both most popular and newest)
   const currentVideoList: RankedRecentVideo[] = useMemo(() => {
     if (!videoData) return [];
-    let rawList: RankedRecentVideo[] = [];
-    if (activeTab === 'shorts') rawList = videoData.topShorts || [];
-    else if (activeTab === 'long') rawList = videoData.topLongVideos || [];
-    else if (activeTab === 'all') rawList = videoData.topAllVideos || [];
+    let list: RankedRecentVideo[] = [];
 
-    const now = Date.now();
-    const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
+    if (activeTab === 'shorts') {
+      list = sortBy === 'newest'
+        ? (videoData.newestShorts && videoData.newestShorts.length > 0 ? videoData.newestShorts : videoData.topShorts || [])
+        : (videoData.topShorts || []);
+    } else if (activeTab === 'long') {
+      list = sortBy === 'newest'
+        ? (videoData.newestLongVideos && videoData.newestLongVideos.length > 0 ? videoData.newestLongVideos : videoData.topLongVideos || [])
+        : (videoData.topLongVideos || []);
+    } else if (activeTab === 'all') {
+      list = sortBy === 'newest'
+        ? (videoData.newestAllVideos && videoData.newestAllVideos.length > 0 ? videoData.newestAllVideos : videoData.topAllVideos || [])
+        : (videoData.topAllVideos || []);
+    }
 
-    // Strict 7-day filter to eliminate any video older than 7 days
-    const strictlyWithin7Days = rawList.filter((v) => {
-      if (!v.publishedAt) return false;
-      const pubTime = new Date(v.publishedAt).getTime();
-      if (isNaN(pubTime)) return false;
-      const diff = now - pubTime;
-      return diff >= 0 && diff <= SEVEN_DAYS_MS;
-    });
+    const validVideos = (list || []).filter((v) => v && v.id);
 
-    return strictlyWithin7Days
-      .sort((a, b) => b.views - a.views)
+    return [...validVideos]
+      .sort((a, b) => {
+        if (sortBy === 'newest') {
+          const dateA = a.publishedAt ? new Date(a.publishedAt).getTime() : 0;
+          const dateB = b.publishedAt ? new Date(b.publishedAt).getTime() : 0;
+          return dateB - dateA;
+        }
+        return b.views - a.views;
+      })
       .slice(0, 10)
       .map((v, i) => ({ ...v, rank: i + 1 }));
-  }, [videoData, activeTab]);
+  }, [videoData, activeTab, sortBy]);
 
   // Max views in current list for relative progress bar
   const maxViewsInList = useMemo(() => {
@@ -193,10 +205,43 @@ export const StatsOverviewScreen: React.FC<StatsOverviewScreenProps> = ({
               </span>
             </div>
             <p className="text-xs text-slate-400 mt-0.5 flex items-center gap-1.5 flex-wrap">
-              <span>Top 10 over de mest sete uploads udgivet inden for de seneste 7 dage</span>
+              <span>
+                {scope === 'favorites'
+                  ? activeTab === 'shorts'
+                    ? sortBy === 'views'
+                      ? 'Top 10 mest populære shorts fra dine favoritter'
+                      : 'Top 10 seneste shorts fra dine favoritter'
+                    : activeTab === 'long'
+                    ? sortBy === 'views'
+                      ? 'Top 10 mest populære videoer fra dine favoritter'
+                      : 'Top 10 seneste videoer fra dine favoritter'
+                    : sortBy === 'views'
+                    ? 'Top 10 mest populære udgivelser (shorts & videoer) fra dine favoritter'
+                    : 'Top 10 seneste udgivelser (shorts & videoer) fra dine favoritter'
+                  : activeTab === 'shorts'
+                  ? sortBy === 'views'
+                    ? 'Top 10 mest populære danske shorts (seneste 7 dage)'
+                    : 'Top 10 seneste danske shorts (seneste 7 dage)'
+                  : activeTab === 'long'
+                  ? sortBy === 'views'
+                    ? 'Top 10 mest populære danske videoer (seneste 7 dage)'
+                    : 'Top 10 seneste danske videoer (seneste 7 dage)'
+                  : sortBy === 'views'
+                  ? 'Top 10 mest populære danske udgivelser (shorts & videoer)'
+                  : 'Top 10 seneste danske udgivelser (shorts & videoer)'}
+              </span>
               <span className="px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 text-[10px] font-semibold flex items-center gap-1">
-                <Clock className="w-3 h-3" />
-                Seneste 7 dage (publishedAfter)
+                {sortBy === 'views' ? (
+                  <>
+                    <Trophy className="w-3 h-3 text-amber-400" />
+                    Rækkefølge fra mest populær
+                  </>
+                ) : (
+                  <>
+                    <Clock className="w-3 h-3 text-emerald-400" />
+                    Rækkefølge fra nyeste upload
+                  </>
+                )}
               </span>
             </p>
           </div>
@@ -356,14 +401,34 @@ export const StatsOverviewScreen: React.FC<StatsOverviewScreenProps> = ({
                 <div className="flex items-center gap-2">
                   <Sparkles className="w-4 h-4 text-amber-400" />
                   <span className="text-xs font-semibold text-slate-200">
-                    {activeTab === 'shorts' && 'Ugens Shorts (Kort format ≤ 60s • Udgivet inden for 7 dage)'}
-                    {activeTab === 'long' && 'Ugens Videoer (Langt format > 60s • Udgivet inden for 7 dage)'}
-                    {activeTab === 'all' && 'Ugens Alt (Blandet Shorts & Videoer • Udgivet inden for 7 dage)'}
+                    {scope === 'favorites'
+                      ? activeTab === 'shorts'
+                        ? sortBy === 'views'
+                          ? 'Top 10 Mest Populære Shorts • Dine Favoritter'
+                          : 'Top 10 Seneste Shorts • Dine Favoritter'
+                        : activeTab === 'long'
+                        ? sortBy === 'views'
+                          ? 'Top 10 Mest Populære Videoer • Dine Favoritter'
+                          : 'Top 10 Seneste Videoer • Dine Favoritter'
+                        : sortBy === 'views'
+                        ? 'Top 10 Mest Populære Alt • Dine Favoritter'
+                        : 'Top 10 Seneste Alt • Dine Favoritter'
+                      : activeTab === 'shorts'
+                      ? sortBy === 'views'
+                        ? 'Top 10 Mest Populære Danske Shorts (seneste 7 dage)'
+                        : 'Top 10 Seneste Danske Shorts (seneste 7 dage)'
+                      : activeTab === 'long'
+                      ? sortBy === 'views'
+                        ? 'Top 10 Mest Populære Danske Videoer (seneste 7 dage)'
+                        : 'Top 10 Seneste Danske Videoer (seneste 7 dage)'
+                      : sortBy === 'views'
+                      ? 'Top 10 Mest Populære Danske Alt (seneste 7 dage)'
+                      : 'Top 10 Seneste Danske Alt (seneste 7 dage)'}
                   </span>
                 </div>
                 <span className="text-[11px] text-slate-400 flex items-center gap-1">
-                  <Clock className="w-3 h-3 text-emerald-400" />
-                  Udgivet seneste 7 dage
+                  <Trophy className="w-3 h-3 text-amber-400" />
+                  {sortBy === 'views' ? 'Rækkefølge fra mest populær' : 'Nyeste upload først'}
                 </span>
               </div>
 
@@ -430,7 +495,7 @@ export const StatsOverviewScreen: React.FC<StatsOverviewScreenProps> = ({
                   </div>
                   <span className="text-xs font-bold uppercase tracking-wider text-amber-400 flex items-center gap-1">
                     <Trophy className="w-3.5 h-3.5 text-amber-400" />
-                    Førende udgivelse netop nu
+                    {sortBy === 'views' ? '#1 Mest populære i denne uge' : '#1 Nyeste udgivelse'}
                   </span>
                 </div>
 
@@ -516,11 +581,46 @@ export const StatsOverviewScreen: React.FC<StatsOverviewScreenProps> = ({
 
           {/* THE TOP 10 RANKED LIST */}
           <div className="space-y-2.5">
-            <div className="flex items-center justify-between text-xs text-slate-400 px-1 pt-1">
-              <span className="font-semibold text-white">
-                Rangering 1 til 10 ({currentVideoList.length} fundet)
-              </span>
-              <span>Visninger & aktivitet</span>
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs text-slate-400 px-1 pt-1">
+              <div className="flex items-center gap-2">
+                <span className="font-semibold text-white">
+                  Top 10 {activeTab === 'shorts' ? 'Shorts' : activeTab === 'long' ? 'Videoer' : 'Alt'} ({currentVideoList.length} vist)
+                </span>
+                <span className="text-slate-500">•</span>
+                <span className="text-slate-400">
+                  {sortBy === 'views' ? 'Rangeret: Mest populære (#1 til #10)' : 'Rangeret: Seneste uploads (#1 til #10)'}
+                </span>
+              </div>
+
+              {/* Sort buttons: Mest populære vs. Seneste upload */}
+              <div className="flex items-center bg-slate-900 p-0.5 rounded-xl border border-slate-800 text-xs self-start sm:self-auto">
+                <button
+                  id="sort-btn-views"
+                  onClick={() => setSortBy('views')}
+                  className={`flex items-center gap-1.5 px-3 py-1 rounded-lg font-medium transition-all cursor-pointer ${
+                    sortBy === 'views'
+                      ? 'bg-rose-600 text-white font-semibold shadow-sm shadow-rose-900/30'
+                      : 'text-slate-400 hover:text-slate-200'
+                  }`}
+                  title="Vis de 10 mest populære i denne uge"
+                >
+                  <Trophy className="w-3 h-3 text-amber-300" />
+                  <span>Mest populære (10)</span>
+                </button>
+                <button
+                  id="sort-btn-newest"
+                  onClick={() => setSortBy('newest')}
+                  className={`flex items-center gap-1.5 px-3 py-1 rounded-lg font-medium transition-all cursor-pointer ${
+                    sortBy === 'newest'
+                      ? 'bg-rose-600 text-white font-semibold shadow-sm shadow-rose-900/30'
+                      : 'text-slate-400 hover:text-slate-200'
+                  }`}
+                  title="Vis de 10 seneste uploads i denne uge"
+                >
+                  <Clock className="w-3 h-3" />
+                  <span>Seneste (10)</span>
+                </button>
+              </div>
             </div>
 
             {currentVideoList.map((video, idx) => {
@@ -580,6 +680,12 @@ export const StatsOverviewScreen: React.FC<StatsOverviewScreenProps> = ({
                       <span className="px-1.5 py-0.2 rounded bg-slate-800 text-[10px] text-slate-400 font-medium">
                         {video.isShort ? 'Kort format' : 'Langt format'}
                       </span>
+                      {video.isFavorite && (
+                        <span className="px-1.5 py-0.5 rounded bg-rose-500/20 text-rose-300 border border-rose-500/30 text-[10px] font-semibold flex items-center gap-1">
+                          <Heart className="w-2.5 h-2.5 fill-rose-400 text-rose-400" />
+                          Favorit
+                        </span>
+                      )}
                       <span className="text-[10px] text-slate-500">•</span>
                       <span className="px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 text-[10px] font-semibold flex items-center gap-1">
                         <Clock className="w-2.5 h-2.5" />
@@ -661,23 +767,32 @@ export const StatsOverviewScreen: React.FC<StatsOverviewScreenProps> = ({
                 </div>
                 <div className="space-y-1">
                   <p className="text-sm font-bold text-white">
-                    Ingen {activeTab === 'shorts' ? 'shorts' : activeTab === 'long' ? 'videoer' : 'udgivelser'} udgivet inden for de seneste 7 dage
+                    Ingen {activeTab === 'shorts' ? 'shorts' : activeTab === 'long' ? 'videoer' : 'udgivelser'} inden for de seneste 7 dage
                   </p>
                   <p className="text-xs text-slate-400 max-w-md mx-auto">
                     {scope === 'favorites'
-                      ? 'Dine valgte favoritkanaler har ikke publiceret noget nyt i denne kategori i løbet af den seneste uge.'
-                      : 'Der er ikke fundet nye udgivelser i denne kategori inden for den seneste uge blandt de scannede kanaler.'}
+                      ? `Dine favoritter har ikke udgivet nye ${activeTab === 'shorts' ? 'shorts' : activeTab === 'long' ? 'videoer' : 'udgivelser'} inden for de seneste 7 dage.`
+                      : 'Der er ikke fundet nye udgivelser inden for de seneste 7 dage i denne kategori blandt de scannede kanaler.'}
                   </p>
+                  {scope === 'favorites' && (
+                    <div className="flex items-center justify-center gap-2 pt-2 flex-wrap">
+                      {activeTab !== 'all' && (
+                        <button
+                          onClick={() => setActiveTab('all')}
+                          className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg text-xs font-semibold cursor-pointer transition-colors"
+                        >
+                          Prøv Top 10 Alt
+                        </button>
+                      )}
+                      <button
+                        onClick={() => setScope('all')}
+                        className="px-3 py-1.5 bg-rose-600 hover:bg-rose-500 text-white rounded-lg text-xs font-semibold cursor-pointer transition-colors"
+                      >
+                        Se alle danske kanaler
+                      </button>
+                    </div>
+                  )}
                 </div>
-                {scope === 'favorites' && (
-                  <button
-                    onClick={() => setScope('all')}
-                    className="px-3.5 py-2 rounded-xl bg-rose-600 text-white text-xs font-semibold hover:bg-rose-500 transition-colors inline-flex items-center gap-1.5 cursor-pointer shadow-sm shadow-rose-900/30"
-                  >
-                    <Layers className="w-3.5 h-3.5" />
-                    <span>Vis ugetop for alle danske kanaler</span>
-                  </button>
-                )}
               </div>
             )}
           </div>

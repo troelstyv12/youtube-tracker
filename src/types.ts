@@ -169,12 +169,16 @@ export interface RankedRecentVideo {
   verified: boolean;
   category?: string;
   rank?: number;
+  isFavorite?: boolean;
 }
 
 export interface TopRecentVideosResponse {
   topShorts: RankedRecentVideo[];
   topLongVideos: RankedRecentVideo[];
   topAllVideos: RankedRecentVideo[];
+  newestShorts?: RankedRecentVideo[];
+  newestLongVideos?: RankedRecentVideo[];
+  newestAllVideos?: RankedRecentVideo[];
   totalShortsFound: number;
   totalLongVideosFound: number;
   totalVideosFound: number;
@@ -182,6 +186,7 @@ export interface TopRecentVideosResponse {
   isLiveApi: boolean;
   fetchedAt: string;
   scope: 'favorites' | 'all';
+  timeWindowLabel?: string;
 }
 
 export interface SubscriberMilestone {
