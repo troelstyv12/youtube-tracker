@@ -16,7 +16,7 @@ app.use(express.json());
 const YOUTUBE_API_KEY =
   process.env.YOUTUBE_API_KEY ||
   process.env.VITE_YOUTUBE_API_KEY ||
-  '';
+  'AIzaSyAA3ecEYh1ze-VSg9ZFWQe3ZUA3iTB8JSI';
 
 // Helper to format ISO 8601 duration (PT1H2M3S or PT15M20S)
 function formatDuration(isoDuration?: string): string {
