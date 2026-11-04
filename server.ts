@@ -4,19 +4,14 @@ import dotenv from 'dotenv';
 import { createServer as createViteServer } from 'vite';
 
 dotenv.config();
-if (!process.env.YOUTUBE_API_KEY) {
-  dotenv.config({ path: '.env.example' });
-}
 
 const app = express();
 const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
 
 app.use(express.json());
 
-const YOUTUBE_API_KEY =
-  process.env.YOUTUBE_API_KEY ||
-  process.env.VITE_YOUTUBE_API_KEY ||
-  'AIzaSyAA3ecEYh1ze-VSg9ZFWQe3ZUA3iTB8JSI';
+// Read credentials only at runtime; never use a client-exposed VITE_ variable.
+const YOUTUBE_API_KEY = process.env.YOUTUBE_API_KEY || process.env.API_KEY_1;
 
 // Helper to format ISO 8601 duration (PT1H2M3S or PT15M20S)
 function formatDuration(isoDuration?: string): string {
@@ -264,7 +259,6 @@ function transformChannelItem(item: any, rank = 1, forcedCategory?: string): any
 app.get('/api/youtube/status', (req, res) => {
   res.json({
     hasKey: Boolean(YOUTUBE_API_KEY),
-    keyPrefix: YOUTUBE_API_KEY ? YOUTUBE_API_KEY.slice(0, 8) + '...' : null,
   });
 });
 

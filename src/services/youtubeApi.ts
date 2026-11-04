@@ -2,7 +2,6 @@ import { YouTuber, WeeklyRankingResponse, TopRecentVideosResponse } from '../typ
 
 export interface ApiStatus {
   hasKey: boolean;
-  keyPrefix?: string | null;
 }
 
 export interface CategoryResponse {
